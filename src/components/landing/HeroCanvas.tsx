@@ -1,83 +1,93 @@
 'use client'
-import { useRef, useMemo } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
-import * as THREE from 'three'
+import { useEffect, useRef } from 'react'
 
-const CLUSTERS = [
-  { x: -0.2, y: -0.1, spread: 2.2, count: 60, hue: 0.67 }, // Casablanca
-  { x:  0.0, y:  0.3, spread: 1.4, count: 28, hue: 0.67 }, // Rabat
-  { x: -0.6, y:  0.5, spread: 1.2, count: 20, hue: 0.68 }, // Tanger
-  { x:  0.1, y: -0.5, spread: 1.2, count: 20, hue: 0.65 }, // Marrakech
-  { x: -0.7, y: -0.6, spread: 1.0, count: 16, hue: 0.63 }, // Agadir
-  { x:  0.5, y:  0.4, spread: 1.0, count: 16, hue: 0.68 }, // Fès
-]
+const COLORS = ['#818CF8','#6366F1','#4F46E5','#A5B4FC','#C7D2FE','#E0E7FF']
 
-function Particles() {
-  const ref   = useRef<THREE.Points>(null)
-  const clock = useRef(0)
-
-  const { positions, colors, phases } = useMemo(() => {
-    const total     = CLUSTERS.reduce((s, c) => s + c.count, 0)
-    const positions = new Float32Array(total * 3)
-    const colors    = new Float32Array(total * 3)
-    const phases    = new Float32Array(total)
-    let idx = 0
-
-    CLUSTERS.forEach(cluster => {
-      for (let i = 0; i < cluster.count; i++) {
-        const angle  = Math.random() * Math.PI * 2
-        const radius = Math.random() * cluster.spread * (0.3 + Math.random() * 0.7)
-        positions[idx * 3]     = cluster.x * 7 + Math.cos(angle) * radius
-        positions[idx * 3 + 1] = cluster.y * 4 + Math.sin(angle) * radius
-        positions[idx * 3 + 2] = (Math.random() - 0.5) * 2
-        const c = new THREE.Color().setHSL(cluster.hue, 0.65 + Math.random() * 0.25, 0.5 + Math.random() * 0.3)
-        colors[idx * 3] = c.r; colors[idx * 3 + 1] = c.g; colors[idx * 3 + 2] = c.b
-        phases[idx] = Math.random() * Math.PI * 2
-        idx++
-      }
-    })
-    return { positions, colors, phases }
-  }, [])
-
-  useFrame((_, delta) => {
-    if (!ref.current) return
-    clock.current += delta
-    ref.current.rotation.z += delta * 0.006
-    const pos = ref.current.geometry.attributes.position as THREE.BufferAttribute
-    for (let i = 0; i < pos.count; i++) {
-      pos.setY(i, positions[i * 3 + 1] + Math.sin(clock.current * 0.4 + phases[i]) * 0.05)
-    }
-    pos.needsUpdate = true
-  })
-
-  return (
-    <points ref={ref}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-        <bufferAttribute attach="attributes-color"    args={[colors, 3]}    />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.07}
-        vertexColors
-        transparent
-        opacity={0.5}
-        sizeAttenuation
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  )
+interface Particle {
+  x: number; y: number
+  vx: number; vy: number
+  r: number; opacity: number
+  phase: number; color: string
 }
 
 export default function HeroCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let raf: number
+    let w = 0, h = 0
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect()
+      w = rect.width
+      h = rect.height
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width  = w * dpr
+      canvas.height = h * dpr
+      ctx.scale(dpr, dpr)
+    }
+    resize()
+    window.addEventListener('resize', resize, { passive: true })
+
+    // Build particle field — clustered to mimic Moroccan city density
+    const particles: Particle[] = Array.from({ length: 180 }, () => ({
+      x:       Math.random() * w,
+      y:       Math.random() * h,
+      vx:      (Math.random() - 0.5) * 0.18,
+      vy:      (Math.random() - 0.5) * 0.12,
+      r:       0.8 + Math.random() * 2.2,
+      opacity: 0.18 + Math.random() * 0.45,
+      phase:   Math.random() * Math.PI * 2,
+      color:   COLORS[Math.floor(Math.random() * COLORS.length)],
+    }))
+
+    let t = 0
+    const tick = () => {
+      ctx.clearRect(0, 0, w, h)
+      t += 0.007
+
+      for (const p of particles) {
+        p.x += p.vx
+        p.y += p.vy + Math.sin(t + p.phase) * 0.06
+
+        if (p.x < -10) p.x = w + 10
+        if (p.x > w + 10) p.x = -10
+        if (p.y < -10) p.y = h + 10
+        if (p.y > h + 10) p.y = -10
+
+        ctx.globalAlpha = p.opacity * (0.65 + Math.sin(t * 0.6 + p.phase) * 0.35)
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.fillStyle = p.color
+        ctx.fill()
+      }
+
+      ctx.globalAlpha = 1
+      raf = requestAnimationFrame(tick)
+    }
+
+    tick()
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', resize)
+    }
+  }, [])
+
   return (
-    <Canvas
-      camera={{ position: [0, 0, 8], fov: 75 }}
-      gl={{ antialias: false, alpha: true, powerPreference: 'low-power' }}
-      dpr={[1, 1.5]}
-      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-    >
-      <Particles />
-    </Canvas>
+    <canvas
+      ref={ref}
+      style={{
+        position: 'absolute', inset: 0,
+        width: '100%', height: '100%',
+        pointerEvents: 'none',
+      }}
+      aria-hidden="true"
+    />
   )
 }
